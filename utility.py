@@ -1,0 +1,227 @@
+# import numpy as np
+
+# def calculate_loss(heart_vertices, catheter_line, threshold=25):
+#     distances = np.linalg.norm(heart_vertices[:, np.newaxis, :] - catheter_line, axis=2)
+#     total_distance = np.max(1/(distances[distances<=threshold]+0.00001))
+#     return total_distance
+
+# def calculate_min_dis(heart_vertices, catheter_line):
+#     distances = np.linalg.norm(heart_vertices[:, np.newaxis, :] - catheter_line, axis=2)
+#     min_distance = np.min(distances)
+#     id = np.unravel_index(np.argmin(distances), distances.shape)
+    
+#     return min_distance, id
+
+# def fit_plane_and_find_normal_line(points, threshold=150, modify=np.array([0,10,-3])):
+#     # Compute the centroid
+#     centroid = np.mean(points, axis=0) + modify
+
+#     # Centralize the points by subtracting the centroid
+#     # centered_points = points - centroid
+
+#     distances = np.linalg.norm(points[:, :3] - centroid, axis=1)
+#     centered_points = points[distances < threshold] - centroid
+
+#     # Perform Singular Value Decomposition (SVD)
+#     _, _, Vt = np.linalg.svd(centered_points)  # SVD 分解
+
+#     # The normal vector of the fitted plane (corresponding to the smallest singular value)
+#     normal_vector = Vt[-1]  # The last row of Vt
+
+#     # parametric equation：X = centroid + t * normal_vector
+#     return centroid, normal_vector
+
+
+# def angle_between_vectors(vec1, vec2):
+
+#     vec1 = np.asarray(vec1)
+#     vec2 = np.asarray(vec2)
+    
+#     dot_product = np.dot(vec1, vec2)
+    
+#     norm_vec1 = np.linalg.norm(vec1)
+#     norm_vec2 = np.linalg.norm(vec2)
+    
+#     cos_theta = np.clip(dot_product / (norm_vec1 * norm_vec2), -1.0, 1.0)
+    
+#     theta = np.arccos(cos_theta)
+#     theta_degrees = np.degrees(theta)
+    
+#     return theta_degrees
+
+
+# def solve_parameters(centroid, normal_vector, theta_x, r_x):
+#     # 提取直线相关量
+#     Cx, Cy, Cz = centroid
+#     d_x, d_y, d_z_line = normal_vector
+    
+#     # 定义 A
+#     theta_x = theta_x*np.pi/180.0
+#     A = r_x * (1 - np.cos(theta_x))
+    
+#     # 计算 K 和 R
+#     K = (Cx * d_y - Cy * d_x) / A
+#     R = np.sqrt(d_x**2 + d_y**2)
+    
+#     # 计算 phi, 注意 arctan2 的参数顺序
+#     phi = np.arctan2(d_x, d_y)
+    
+#     # 解 theta_z（注意 arcsin 可能有多解）
+#     theta_z = np.arcsin(np.clip(K/R, -1.0, 1.0)) - phi
+    
+#     # 根据 x 分量求 t
+#     t = (A * np.sin(theta_z) - Cx) / d_x
+    
+#     # 根据 z 分量求 d_z
+#     d_z = Cz + t * d_z_line - r_x * np.sin(theta_x)
+    
+#     return theta_z, d_z, t
+
+import numpy as np
+
+# ====================== 损失计算函数 ======================
+# 这样的做法挺好的，不用考虑导管与血管的相对关系
+def calculate_loss(heart_vertices, catheter_line, threshold=25):
+    """
+    计算心脏表面顶点与导管线之间的惩罚性距离损失
+    参数：
+        heart_vertices: 心脏表面顶点坐标数组 (N,3)
+        catheter_line: 导管线坐标数组 (M,3)
+        threshold: 距离阈值，超过该值的点不计入计算
+    返回：
+        total_distance: 惩罚后的最大距离值
+    """
+    # 计算每个心脏顶点到导管线每个点的欧氏距离（N,M）矩阵
+    distances = np.linalg.norm(heart_vertices[:, np.newaxis, :] - catheter_line, axis=2)
+    
+    # 计算惩罚距离：取所有小于阈值的距离的倒数最大值（距离越小惩罚值越大）
+    # 添加0.00001防止除零错误
+    total_distance = np.max(1/(distances[distances<=threshold]+0.00001))
+    
+    return total_distance
+
+
+# ====================== 最小距离计算函数 ======================
+def calculate_min_dis(heart_vertices, catheter_line):
+    """
+    计算心脏表面顶点与导管线之间的最小距离及其位置索引
+    参数：
+        heart_vertices: 心脏表面顶点坐标数组 (N,3)
+        catheter_line: 导管线坐标数组 (M,3)
+    返回：
+        min_distance: 最小欧氏距离
+        id: 最小距离对应的顶点和导管点索引元组 (vertex_idx, catheter_point_idx)
+    """
+    # 计算所有顶点到导管线的距离矩阵（N,M）
+    distances = np.linalg.norm(heart_vertices[:, np.newaxis, :] - catheter_line, axis=2)
+    
+    # 获取全局最小距离
+    min_distance = np.min(distances)
+    
+    # 找到最小距离在矩阵中的二维索引位置
+    id = np.unravel_index(np.argmin(distances), distances.shape)
+    
+    return min_distance, id
+
+
+# ====================== 平面拟合与法线计算函数 ======================
+def fit_plane_and_find_normal_line(points, threshold=150, modify=np.array([0,10,-3])):
+    """
+    通过点云拟合平面并计算法线方向的直线参数
+    参数：
+        points: 输入点云坐标数组 (N,3)
+        threshold: 距离阈值，用于筛选有效点
+        modify: 质心位置调整偏移量
+    返回：
+        centroid: 调整后的质心坐标
+        normal_vector: 平面法线向量
+    """
+    # 计算调整后的质心（原始质心加上偏移量）
+    centroid = np.mean(points, axis=0) + modify
+
+    # 计算各点到调整后质心的距离，并筛选有效点
+    distances = np.linalg.norm(points[:, :3] - centroid, axis=1)
+    centered_points = points[distances < threshold] - centroid  # 中心化处理
+
+    # 使用奇异值分解(SVD)进行平面拟合
+    _, _, Vt = np.linalg.svd(centered_points)  # 分解得到右奇异矩阵转置
+
+    # 取最小奇异值对应的向量作为平面法线（Vt最后一行）
+    normal_vector = Vt[-1]  # 法线方向向量
+
+    # 返回参数方程参数：X = centroid + t*normal_vector
+    return centroid, normal_vector
+
+
+# ====================== 向量夹角计算函数 ======================
+def angle_between_vectors(vec1, vec2):
+    """
+    计算两个三维向量之间的夹角（单位：度）
+    参数：
+        vec1: 向量1
+        vec2: 向量2
+    返回：
+        theta_degrees: 夹角角度（0-180度）
+    """
+    # 转换为numpy数组
+    vec1 = np.asarray(vec1)
+    vec2 = np.asarray(vec2)
+    
+    # 计算点积
+    dot_product = np.dot(vec1, vec2)
+    
+    # 计算向量模长
+    norm_vec1 = np.linalg.norm(vec1)
+    norm_vec2 = np.linalg.norm(vec2)
+    
+    # 计算余弦值并限制在[-1,1]范围内（防止数值误差）
+    cos_theta = np.clip(dot_product / (norm_vec1 * norm_vec2), -1.0, 1.0)
+    
+    # 转换为角度制
+    theta = np.arccos(cos_theta)
+    theta_degrees = np.degrees(theta)
+    
+    return theta_degrees
+
+
+# ====================== 几何参数求解函数 ======================
+def solve_parameters(centroid, normal_vector, theta_x, r_x):
+    """
+    根据平面参数求解几何配置参数
+    参数：
+        centroid: 心脏中心线质心坐标
+        normal_vector: 心脏中心线方向向量
+        theta_x: 导管x轴与世界系z轴的夹角
+        r_x: 输入半径参数
+    返回：
+        theta_z: 求解的z轴旋转角度（弧度）
+        d_z: 心脏中心线相对世界坐标系z轴方向偏移量
+        t: 直线参数方程中的比例系数
+    """
+    # 分解质心坐标和法线向量分量
+    Cx, Cy, Cz = centroid
+    d_x, d_y, d_z_line = normal_vector  # 法线向量分量
+    
+    # 将输入角度转换为弧度
+    theta_x = theta_x * np.pi / 180.0
+    
+    # 计算A参数（几何关系推导的中间量）
+    A = r_x * (1 - np.cos(theta_x))
+    
+    # 计算K参数和R参数（平面投影相关量）
+    K = (Cx * d_y - Cy * d_x) / A
+    R = np.sqrt(d_x**2 + d_y**2)  # 法线在XY平面的投影长度
+    
+    # 计算phi角（法线在XY平面的方位角）
+    phi = np.arctan2(d_x, d_y)  # 注意参数顺序为(y,x)
+    
+    # 求解theta_z（考虑反三角函数的取值范围）
+    theta_z = np.arcsin(np.clip(K/R, -1.0, 1.0)) - phi
+    
+    # 根据x分量求解比例系数t
+    t = (A * np.sin(theta_z) - Cx) / d_x
+    
+    # 根据z分量求解d_z参数
+    d_z = Cz + t * d_z_line - r_x * np.sin(theta_x)
+    
+    return theta_z, d_z, t
