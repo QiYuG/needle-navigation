@@ -84,19 +84,26 @@ class DigitalEnv(gym.Env):
                                        high=np.array([3]*6))
 
 
-    def reset(self, dz1=30, theta_z=0, r_x=10, theta_x=80, theta_y=0, dz2=20, seed=None, options=None):
+    def reset(self, dz1=30, theta_z=0, theta_x=80, theta_y=0, dz2=20, seed=None, options=None):
         self.needle.dz1 = dz1
         self.needle.theta_z = theta_z
-        self.needle.r_x = r_x
         self.needle.theta_x = theta_x
+        self.needle.r_x = (62.89620622886024 * 180) / (self.needle.theta_x * np.pi)
         self.needle.theta_y = theta_y
         self.needle.dz2 = dz2
         self.needle.forward_kinematics()
         self.needle.calculate_shape()
         # 完成这部分后调用needle.catheter_points即可得到导管的点云
+        '''
+        此处需要添加返回值，返回初始观测值与可选的字典信息
+        '''
+        
 
     def step(self, action=0):
         """处理动作输入，更新导管状态"""
+        
+        # -------此处待更改，这里theta_x，theta_z, dz1, theta_y都是根据经验求出的-------
+        
         # 计算导管与法线的角度关系
         # find theta_x
         z_axis = np.array([0, 0, 1]) 
@@ -120,12 +127,27 @@ class DigitalEnv(gym.Env):
         angle_with_y = utility.angle_between_vectors(self.normal_vector, self.needle.T_12[0:3,2])
         self.needle.theta_y = -angle_with_y
         
+        # -------改到这里-------
+        '''
+        这里我需要将观测输入Actor网络，得到theta_x, theta_y, dz1, theta_z，这里似乎和r_x没有关系
+        '''
+        
         # update
         self.needle.forward_kinematics()
         self.needle.calculate_shape()
 
+        '''
+        此处需要添加返回值：
+        observation: 当前的观测值。
+        reward: 当前的奖励值。
+        done: 一个布尔值，表示当前回合是否结束。
+        info: 一个字典，包含调试信息（可选）。
+        '''
 
 
+    '''
+    需要支持mode="human"，并在需要时显示环境的当前状态。
+    '''
     def render(self):
         # 3D渲染
         # plot heart
@@ -218,7 +240,7 @@ if __name__ == '__main__':
     # plot result
     envs.needle.r_x = r_x_best
     print('config: ', r_x_best)
-    np.savetxt("catheter_shape.txt", catheter_points, fmt="%.6f", delimiter=" ")
+    np.savetxt("catheter_shape_plan_1.txt", catheter_points, fmt="%.6f", delimiter=" ")
     envs.step()
     envs.render()
 
