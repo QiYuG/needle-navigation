@@ -2,6 +2,7 @@ import gymnasium as gym
 from gymnasium import spaces    # 强化学习环境标准接口
 import numpy as np
 import matplotlib.pyplot as plt
+import torch
 
 from stl import mesh
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -97,7 +98,6 @@ class DigitalEnv(gym.Env):
         '''
         此处需要添加返回值，返回初始观测值与可选的字典信息
         '''
-        
 
     def step(self, action=0):
         """处理动作输入，更新导管状态"""
@@ -255,3 +255,38 @@ if __name__ == '__main__':
 弯曲部分——用于导向瓣膜
 刚性部分——用于进入血管        
 """
+
+
+def calculate_potential_field(envs, needle_points, centerline_points, k=10, epsilon=1e-6):
+        """
+        计算导管弯曲段的势场值
+        :param needle_points: 导管弯曲段的点云 (N, 3)
+        :param centerline_points: 中心线的点云 (M, 3)
+        :return: 势场值 (float)
+        """
+        # 计算导管点到中心线点的距离矩阵
+        distances = np.linalg.norm(needle_points[:, np.newaxis, :] - centerline_points[np.newaxis, :, :], axis=2)
+        
+        # 对每个导管点，找到到中心线的最近距离
+        min_distances = np.min(distances, axis=1)
+        
+        # 势场1值为最近距离的平方和
+        potential_1 = np.sum(min_distances**2)
+        
+        # 合并了心脏和瓣膜的点云
+        obstacle = np.vstack((envs.sampled_vertices, envs.valve_unique_vertices))
+        
+        # 弯曲部分与整个点云的最小距离及索引
+        min_dis1, obs_id1 = utility.calculate_min_dis(obstacle, envs.needle.catheter_bending_section[::100,:])
+        
+        # 刚性部分与心脏点云的最小距离及索引
+        min_dis2, obs_id2 = utility.calculate_min_dis(envs.sampled_vertices, envs.needle.catheter_rigid_section[::50,:])
+        
+        potential_2 = k / (min_dis1 + epsilon)
+        
+        potential_3 = k / (min_dis2 + epsilon)
+        
+        potential = potential_1 + potential_2 + potential_3
+        
+        return potential
+    
