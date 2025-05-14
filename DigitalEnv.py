@@ -363,6 +363,8 @@ class DigitalEnv(gym.Env):
         # 导管实例
         self.needle = Needle(device=device)
         self.fig = None
+        self.destination = utility.get_destination(self.centerline[0], self.normal_vector, self.needle.catheter_points)
+        self.start = torch.tensor([0, 0, 0], dtype=torch.float32, device=self.device)
 
     def reset(self, dz1=30, theta_z=0, theta_x=80, theta_y=0, dz2=20, r_x=30, seed=None, options=None):
         self.needle.dz1 = torch.tensor(dz1, dtype=torch.float32, device=self.device) 
@@ -447,7 +449,7 @@ class DigitalEnv(gym.Env):
         self.ax.set_ylim([-150, 150])
         self.ax.set_zlim([0, 300])
         plt.pause(0.01)
-
+        
     def close(self):
         return super().close()
 

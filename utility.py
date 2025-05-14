@@ -28,25 +28,25 @@
 #     # The normal vector of the fitted plane (corresponding to the smallest singular value)
 #     normal_vector = Vt[-1]  # The last row of Vt
 
-#     # parametric equation：X = centroid + t * normal_vector
-#     return centroid, normal_vector
+#         catheter_line: 导管线坐标张量 (M,3)
+#     返回：
+#         min_distance: 最小欧氏距离
+#         ids: 最小距离对应的顶点和导管点索引元组 (vertex_idx, catheter_point_idx)
+#     """
+#     # 计算距离矩阵 [6,7](@ref)
+#     distances = torch.cdist(heart_vertices.unsqueeze(0), catheter_line.unsqueeze(0)).squeeze(0)
+    
+#     # 获取最小距离和索引 [9](@ref)
+#     min_distance, flat_idx = torch.min(distances.view(-1), dim=0)
+#     idx = (flat_idx // distances.size(1), flat_idx % distances.size(1))
+    
+#     return min_distance.item(), idx
 
-
-# def angle_between_vectors(vec1, vec2):
-
-#     vec1 = np.asarray(vec1)
-#     vec2 = np.asarray(vec2)
-    
-#     dot_product = np.dot(vec1, vec2)
-    
-#     norm_vec1 = np.linalg.norm(vec1)
-#     norm_vec2 = np.linalg.norm(vec2)
-    
-#     cos_theta = np.clip(dot_product / (norm_vec1 * norm_vec2), -1.0, 1.0)
-    
-#     theta = np.arccos(cos_theta)
-#     theta_degrees = np.degrees(theta)
-    
+# # ====================== 平面拟合与法线计算函数 ======================
+# def fit_plane_and_find_normal_line(points, threshold=150, modify=torch.tensor([0,10,-3])):
+#     """
+#     通过点云拟合平面并计算法线方向的直线参数
+#     参数：
 #     return theta_degrees
 
 
@@ -360,3 +360,38 @@ def solve_parameters(centroid, normal_vector, theta_x, r_x):
     d_z = Cz + t * d_z_line - r_x * torch.sin(theta_x_rad)
     
     return theta_z, d_z, t
+
+def get_destination(start_point, normal_vector, valve_points, step=0.1, max_steps=10000):
+    """
+    沿着中心线方向找到一个点，使其尽可能接近valve点云的质心
+    :param start_point: 起始点 (3,)
+    :param normal_vector: 中心线的方向向量 (3,)
+    :param valve_points: 瓣膜点云 (N, 3)
+    :param step: 每次沿中心线移动的步长
+    :param max_steps: 最大迭代次数
+    :return: 最优点 (3,)
+    """
+    # 计算valve点云的质心
+    valve_centroid = torch.mean(valve_points, dim=0)
+
+    # 初始化搜索点
+    current_point = start_point.clone()
+    min_distance = float('inf')
+    best_point = current_point.clone()
+
+    for _ in range(max_steps):
+        # 计算当前点到valve质心的距离
+        distance = torch.norm(current_point - valve_centroid)
+
+        # 如果找到更小的距离，则更新最优点
+        if distance < min_distance:
+            min_distance = distance
+            best_point = current_point.clone()
+        else:
+            # 如果距离开始增大，停止搜索
+            break
+
+        # 沿着中心线方向移动
+        current_point += step * normal_vector
+
+    return best_point
