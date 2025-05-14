@@ -142,155 +142,339 @@
 
 #     plt.show()
 
-import numpy as np
+
+
+
+# import numpy as np
+# import matplotlib.pyplot as plt
+# from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+# # ====================== 导管针状物类定义 ======================
+# class Needle():
+#     def __init__(self, x_base=0, y_base=0, dz1=30, theta_z=-20, r_x=70, theta_x=80, theta_y=0, dz2=20):
+#         """ 初始化导管基础参数和变换矩阵 """
+#         # 基础位置
+#         self.x_base = x_base  # X轴基准坐标
+#         self.y_base = y_base  # Y轴基准坐标
+
+#         # 运动学参数配置
+#         self.dz1 = dz1     # 第一段直线长度（沿Z轴）
+#         self.theta_z = theta_z  # Z轴旋转角度（度）
+#         self.r_x = r_x     # X方向弯曲半径
+#         self.theta_x = theta_x  # X方向弯曲角度（度）
+#         self.theta_y = theta_y   # Y轴旋转角度（预留）
+#         self.dz2 = dz2     # 第二段直线长度（弯曲后的延伸）
+
+#         # 变换矩阵初始化
+#         self.T_0 = self.transl(self.x_base, self.y_base, 0)  # 基准坐标系
+#         self.T_01, self.T_12, self.T_23 = np.eye(4), np.eye(4), np.eye(4)  # 各段变换矩阵
+#         self.catheter_points = np.array([[self.x_base, self.y_base, 0]])  # 导管点云容器
+#         self.catheter_bending_section = np.array([[self.x_base, self.y_base, 0]])  # 弯曲段
+#         self.catheter_rigid_section = np.array([[]])  # 刚性段
+
+#     def forward_kinematics(self):
+#         """ 正向运动学计算 """
+#         # 第一段变换：Z轴旋转+平移
+#         self.T_01 = self.T_0 @ self.transformation_matrix_z(self.theta_z, self.dz1)
+#         # 第二段变换：恒定曲率弯曲+Y轴旋转
+#         self.T_12 = self.T_01 @ self.constance_curve_matrix_x(self.theta_x, self.r_x) \
+#             @ self.transformation_matrix_y(self.theta_y, 0)
+
+#     def calculate_shape(self):
+#         """ 计算导管三维形状 """
+#         # 初始化点云容器
+#         self.catheter_points = np.array([[self.x_base, self.y_base, 0]])
+        
+#         # 第一部分：直线段（沿Z轴）
+#         z_values = np.linspace(1, self.dz1, int(self.dz1))  # 生成等间距Z值
+#         section_one_points = np.column_stack((  # 构建(x,y,z)坐标
+#             np.full_like(z_values, self.x_base),  # X坐标保持基准
+#             np.full_like(z_values, self.y_base),  # Y坐标保持基准
+#             z_values))  # Z方向线性增长
+        
+#         # 第二部分：弯曲段（恒定曲率圆弧）
+#         length = self.r_x * self.theta_x * np.pi / 180  # 计算弧长
+#         length_values = np.linspace(1, length, int(length))  # 沿弧长采样
+#         # 参数化圆弧（在局部坐标系中）
+#         x_values = np.zeros(int(length))  # X方向无变化
+#         y_values = -self.r_x + self.r_x * np.cos(length_values/self.r_x)  # Y方向余弦变化
+#         z_values = self.r_x * np.sin(length_values/self.r_x)  # Z方向正弦变化
+#         one_values = np.ones(int(length))  # 齐次坐标扩充
+#         # 组合齐次坐标并进行坐标变换
+#         section_two_points = np.vstack((x_values, y_values, z_values, one_values))
+#         section_two_points = ((self.T_01 @ section_two_points).T)[:,0:3]  # 应用变换矩阵
+        
+#         # 第三部分：刚性延伸段
+#         z_values = np.linspace(1, self.dz2, int(self.dz2))  # 生成延伸段Z值
+#         x_values = np.zeros(int(self.dz2))  # X保持零
+#         y_values = np.zeros(int(self.dz2))  # Y保持零
+#         one_values = np.ones(int(self.dz2))  # 齐次坐标
+#         section_three_points = np.vstack((x_values, y_values, z_values, one_values))
+#         section_three_points = ((self.T_12 @ section_three_points).T)[:,0:3]  # 应用变换
+        
+#         # 合并所有点云
+#         self.catheter_points = np.vstack((self.catheter_points, 
+#                                         section_one_points, 
+#                                         section_two_points,
+#                                         section_three_points))
+#         # 分离存储弯曲段和刚性段
+#         self.catheter_bending_section = np.vstack((self.catheter_points, 
+#                                         section_one_points, 
+#                                         section_two_points))
+#         self.catheter_rigid_section = section_three_points
+
+#     # ====================== 变换矩阵工具方法 ======================
+#     @staticmethod
+#     def transformation_matrix_z(theta, d):
+#         """ Z轴旋转平移矩阵 """
+#         theta = theta * np.pi/180.0  # 角度转弧度
+#         cos_theta = np.cos(theta)
+#         sin_theta = np.sin(theta)
+#         return np.array([  # 标准Z轴旋转平移矩阵
+#             [cos_theta, -sin_theta, 0, 0],
+#             [sin_theta,  cos_theta, 0, 0],
+#             [0,          0,         1, d],
+#             [0,          0,         0, 1]
+#         ])
+
+#     @staticmethod
+#     def constance_curve_matrix_x(theta, r):
+#         """ 恒定曲率弯曲矩阵（绕X轴） """
+#         theta = theta * np.pi/180.0
+#         cos_theta = np.cos(theta)
+#         sin_theta = np.sin(theta)
+#         return np.array([  # 包含曲率补偿的变换矩阵
+#             [1, 0,         0,          0],
+#             [0, cos_theta, -sin_theta, -r + r*cos_theta],  # Y方向补偿
+#             [0, sin_theta, cos_theta,  r*sin_theta],       # Z方向补偿
+#             [0, 0,         0,          1]
+#         ])
+    
+#     @staticmethod
+#     def transl(x,y,z):
+#         """ 纯平移矩阵 """
+#         return np.array([  # 标准平移变换矩阵
+#             [1,0,0,x],
+#             [0,1,0,y],
+#             [0,0,1,z],
+#             [0,0,0,1]
+#         ])
+    
+#     @staticmethod
+#     def transformation_matrix_y(theta, d):
+#         """ Y轴旋转平移矩阵 """
+#         theta = theta * np.pi/180.0
+#         cos_theta = np.cos(theta)
+#         sin_theta = np.sin(theta)
+#         return np.array([  # 标准Y轴旋转矩阵
+#             [ cos_theta, 0, sin_theta, 0],
+#             [ 0,         1, 0,         d],
+#             [-sin_theta, 0, cos_theta, 0],
+#             [ 0,         0, 0,         1]
+#         ])
+
+# # ====================== 主程序 ======================
+# if __name__ == '__main__':
+#     needle = Needle()  # 创建导管对象
+#     needle.forward_kinematics()  # 计算运动学
+#     needle.calculate_shape()  # 生成形状点云
+
+#     # 创建3D可视化
+#     fig = plt.figure()
+#     ax = fig.add_subplot(111, projection='3d')
+#     ax.scatter(needle.catheter_points[:,0],  # X坐标
+#                needle.catheter_points[:,1],  # Y坐标
+#                needle.catheter_points[:,2])  # Z坐标
+    
+#     # 设置坐标轴标签
+#     ax.set_xlabel('X(mm)')
+#     ax.set_ylabel('Y(mm)')
+#     ax.set_zlabel('Z(mm)')
+    
+#     # 设置显示范围
+#     ax.set_xlim([-50,50])
+#     ax.set_ylim([-50,50])
+#     ax.set_zlim([0,100])
+
+#     plt.show()
+
+import torch
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-# ====================== 导管针状物类定义 ======================
 class Needle():
-    def __init__(self, x_base=0, y_base=0, dz1=30, theta_z=-20, r_x=70, theta_x=80, theta_y=0, dz2=20):
-        """ 初始化导管基础参数和变换矩阵 """
-        # 基础位置
-        self.x_base = x_base  # X轴基准坐标
-        self.y_base = y_base  # Y轴基准坐标
+    def __init__(self, x_base=0, y_base=0, dz1=30, theta_z=-20, r_x=70, 
+                 theta_x=80, theta_y=0, dz2=20, 
+                 device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):  # 新增device参数
+        """ 初始化导管参数（支持GPU设备） """
+        self.device = device  # 存储设备信息
+        
+        # 基础位置（转换为张量）
+        self.x_base = torch.tensor(x_base, dtype=torch.float32, device=device)
+        self.y_base = torch.tensor(y_base, dtype=torch.float32, device=device)
 
-        # 运动学参数配置
-        self.dz1 = dz1     # 第一段直线长度（沿Z轴）
-        self.theta_z = theta_z  # Z轴旋转角度（度）
-        self.r_x = r_x     # X方向弯曲半径
-        self.theta_x = theta_x  # X方向弯曲角度（度）
-        self.theta_y = theta_y   # Y轴旋转角度（预留）
-        self.dz2 = dz2     # 第二段直线长度（弯曲后的延伸）
+        # 运动学参数（保持为张量）
+        self.dz1 = torch.tensor(dz1, dtype=torch.float32, device=device)
+        self.theta_z = torch.tensor(theta_z, dtype=torch.float32, device=device)
+        self.r_x = torch.tensor(r_x, dtype=torch.float32, device=device)
+        self.theta_x = torch.tensor(theta_x, dtype=torch.float32, device=device)
+        self.theta_y = torch.tensor(theta_y, dtype=torch.float32, device=device)
+        self.dz2 = torch.tensor(dz2, dtype=torch.float32, device=device)
 
-        # 变换矩阵初始化
+        # 初始化变换矩阵（直接在目标设备上创建）
         self.T_0 = self.transl(self.x_base, self.y_base, 0)  # 基准坐标系
-        self.T_01, self.T_12, self.T_23 = np.eye(4), np.eye(4), np.eye(4)  # 各段变换矩阵
-        self.catheter_points = np.array([[self.x_base, self.y_base, 0]])  # 导管点云容器
-        self.catheter_bending_section = np.array([[self.x_base, self.y_base, 0]])  # 弯曲段
-        self.catheter_rigid_section = np.array([[]])  # 刚性段
+        self.T_01 = torch.eye(4, dtype=torch.float32, device=device)  # 各段变换矩阵
+        self.T_12 = torch.eye(4, dtype=torch.float32, device=device)
+        self.T_23 = torch.eye(4, dtype=torch.float32, device=device)
+        
+        # 点云容器初始化到设备
+        self.catheter_points = torch.tensor(
+            [[self.x_base, self.y_base, 0.]], 
+            dtype=torch.float32,
+            device=device
+        )
+        self.catheter_bending_section = torch.tensor(
+            [[self.x_base, self.y_base, 0.]], 
+            dtype=torch.float32,
+            device=device
+        )
+        self.catheter_rigid_section = torch.tensor([[]], dtype=torch.float32, device=device)
 
     def forward_kinematics(self):
-        """ 正向运动学计算 """
-        # 第一段变换：Z轴旋转+平移
-        self.T_01 = self.T_0 @ self.transformation_matrix_z(self.theta_z, self.dz1)
-        # 第二段变换：恒定曲率弯曲+Y轴旋转
-        self.T_12 = self.T_01 @ self.constance_curve_matrix_x(self.theta_x, self.r_x) \
-            @ self.transformation_matrix_y(self.theta_y, 0)
+        """ 正向运动学计算（支持GPU加速） """
+        # 使用类内存储的device信息
+        self.T_01 = self.T_0 @ self.transformation_matrix_z(
+            self.theta_z, self.dz1
+        )
+        self.T_12 = self.T_01 @ self.constance_curve_matrix_x(
+            self.theta_x, self.r_x
+        ) @ self.transformation_matrix_y(self.theta_y, 0)
 
     def calculate_shape(self):
-        """ 计算导管三维形状 """
-        # 初始化点云容器
-        self.catheter_points = np.array([[self.x_base, self.y_base, 0]])
+        """ 形状计算（全GPU张量操作） """
+        # 初始化点云容器（保持设备一致）
+        self.catheter_points = torch.tensor(
+            [[self.x_base, self.y_base, 0.]], 
+            device=self.device
+        )
         
-        # 第一部分：直线段（沿Z轴）
-        z_values = np.linspace(1, self.dz1, int(self.dz1))  # 生成等间距Z值
-        section_one_points = np.column_stack((  # 构建(x,y,z)坐标
-            np.full_like(z_values, self.x_base),  # X坐标保持基准
-            np.full_like(z_values, self.y_base),  # Y坐标保持基准
-            z_values))  # Z方向线性增长
+        # 第一部分：直线段（设备感知的linspace）
+        z_values = torch.linspace(
+            1, self.dz1, int(self.dz1), 
+            device=self.device
+        )
+        section_one_points = torch.stack((
+            torch.full_like(z_values, self.x_base),
+            torch.full_like(z_values, self.y_base),
+            z_values
+        ), dim=1)
         
-        # 第二部分：弯曲段（恒定曲率圆弧）
-        length = self.r_x * self.theta_x * np.pi / 180  # 计算弧长
-        length_values = np.linspace(1, length, int(length))  # 沿弧长采样
-        # 参数化圆弧（在局部坐标系中）
-        x_values = np.zeros(int(length))  # X方向无变化
-        y_values = -self.r_x + self.r_x * np.cos(length_values/self.r_x)  # Y方向余弦变化
-        z_values = self.r_x * np.sin(length_values/self.r_x)  # Z方向正弦变化
-        one_values = np.ones(int(length))  # 齐次坐标扩充
-        # 组合齐次坐标并进行坐标变换
-        section_two_points = np.vstack((x_values, y_values, z_values, one_values))
-        section_two_points = ((self.T_01 @ section_two_points).T)[:,0:3]  # 应用变换矩阵
+        # 第二部分：弯曲段（设备感知的三角函数）
+        length = self.r_x * self.theta_x * torch.pi / 180
+        length_values = torch.linspace(
+            1, length, int(length), 
+            device=self.device
+        )
+        x_values = torch.zeros(int(length), device=self.device)
+        y_values = -self.r_x + self.r_x * torch.cos(length_values/self.r_x)
+        z_values = self.r_x * torch.sin(length_values/self.r_x)
+        one_values = torch.ones(int(length), device=self.device)
         
-        # 第三部分：刚性延伸段
-        z_values = np.linspace(1, self.dz2, int(self.dz2))  # 生成延伸段Z值
-        x_values = np.zeros(int(self.dz2))  # X保持零
-        y_values = np.zeros(int(self.dz2))  # Y保持零
-        one_values = np.ones(int(self.dz2))  # 齐次坐标
-        section_three_points = np.vstack((x_values, y_values, z_values, one_values))
-        section_three_points = ((self.T_12 @ section_three_points).T)[:,0:3]  # 应用变换
+        section_two_points = torch.stack(
+            (x_values, y_values, z_values, one_values), 
+            dim=0
+        )
+        section_two_points = (self.T_01 @ section_two_points).T[:, :3]
         
-        # 合并所有点云
-        self.catheter_points = np.vstack((self.catheter_points, 
-                                        section_one_points, 
-                                        section_two_points,
-                                        section_three_points))
-        # 分离存储弯曲段和刚性段
-        self.catheter_bending_section = np.vstack((self.catheter_points, 
-                                        section_one_points, 
-                                        section_two_points))
+        # 第三部分：刚性段（设备感知的操作）
+        z_values = torch.linspace(
+            1, self.dz2, int(self.dz2), 
+            device=self.device
+        )
+        x_values = torch.zeros(int(self.dz2), device=self.device)
+        y_values = torch.zeros(int(self.dz2), device=self.device)
+        one_values = torch.ones(int(self.dz2), device=self.device)
+        section_three_points = torch.stack(
+            (x_values, y_values, z_values, one_values), 
+            dim=0
+        )
+        section_three_points = (self.T_12 @ section_three_points).T[:, :3]
+        
+        # 合并点云（设备自动继承）
+        self.catheter_points = torch.cat((
+            self.catheter_points, 
+            section_one_points, 
+            section_two_points,
+            section_three_points
+        ), dim=0)
+        
+        self.catheter_bending_section = torch.cat((self.catheter_points, 
+                                          section_one_points, 
+                                          section_two_points))
+        
         self.catheter_rigid_section = section_three_points
 
-    # ====================== 变换矩阵工具方法 ======================
-    @staticmethod
-    def transformation_matrix_z(theta, d):
-        """ Z轴旋转平移矩阵 """
-        theta = theta * np.pi/180.0  # 角度转弧度
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-        return np.array([  # 标准Z轴旋转平移矩阵
-            [cos_theta, -sin_theta, 0, 0],
-            [sin_theta,  cos_theta, 0, 0],
-            [0,          0,         1, d],
-            [0,          0,         0, 1]
-        ])
+    # ====================== 修改后的变换矩阵方法 ======================
+    def transformation_matrix_z(self, theta, d):
+        """ Z轴变换矩阵（支持设备） """
+        theta = theta * torch.pi/180.0
+        return torch.tensor([  # 直接返回设备感知的矩阵
+            [torch.cos(theta), -torch.sin(theta), 0., 0.],
+            [torch.sin(theta),  torch.cos(theta), 0., 0.],
+            [0.,               0.,               1., d],
+            [0.,               0.,               0., 1.]
+        ], device=self.device)
 
-    @staticmethod
-    def constance_curve_matrix_x(theta, r):
-        """ 恒定曲率弯曲矩阵（绕X轴） """
-        theta = theta * np.pi/180.0
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-        return np.array([  # 包含曲率补偿的变换矩阵
-            [1, 0,         0,          0],
-            [0, cos_theta, -sin_theta, -r + r*cos_theta],  # Y方向补偿
-            [0, sin_theta, cos_theta,  r*sin_theta],       # Z方向补偿
-            [0, 0,         0,          1]
-        ])
+    def constance_curve_matrix_x(self, theta, r):
+        """ X轴曲率矩阵（设备感知） """
+        theta = theta * torch.pi/180.0
+        return torch.tensor([
+            [1., 0.,               0.,              0.],
+            [0., torch.cos(theta), -torch.sin(theta), -r + r*torch.cos(theta)],
+            [0., torch.sin(theta), torch.cos(theta), r*torch.sin(theta)],
+            [0., 0.,               0.,              1.]
+        ], device=self.device)
     
-    @staticmethod
-    def transl(x,y,z):
-        """ 纯平移矩阵 """
-        return np.array([  # 标准平移变换矩阵
-            [1,0,0,x],
-            [0,1,0,y],
-            [0,0,1,z],
-            [0,0,0,1]
-        ])
+    def transl(self, x, y, z):
+        """ 平移矩阵（设备感知） """
+        return torch.tensor([
+            [1.,0.,0.,x],
+            [0.,1.,0.,y],
+            [0.,0.,1.,z],
+            [0.,0.,0.,1.]
+        ], device=self.device)
     
-    @staticmethod
-    def transformation_matrix_y(theta, d):
-        """ Y轴旋转平移矩阵 """
-        theta = theta * np.pi/180.0
-        cos_theta = np.cos(theta)
-        sin_theta = np.sin(theta)
-        return np.array([  # 标准Y轴旋转矩阵
-            [ cos_theta, 0, sin_theta, 0],
-            [ 0,         1, 0,         d],
-            [-sin_theta, 0, cos_theta, 0],
-            [ 0,         0, 0,         1]
-        ])
+    def transformation_matrix_y(self, theta, d):
+        """ Y轴变换矩阵（设备感知） """
+        theta = theta * torch.pi/180.0
+        return torch.tensor([
+            [torch.cos(theta),  0., torch.sin(theta), 0.],
+            [0.,               1., 0.,               d],
+            [-torch.sin(theta),0., torch.cos(theta), 0.],
+            [0.,               0., 0.,               1.]
+        ], device=self.device)
 
-# ====================== 主程序 ======================
+# ====================== 使用示例 ======================
 if __name__ == '__main__':
-    needle = Needle()  # 创建导管对象
-    needle.forward_kinematics()  # 计算运动学
-    needle.calculate_shape()  # 生成形状点云
-
-    # 创建3D可视化
+    # 创建GPU实例
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    needle = Needle(device=device)
+    
+    # 验证设备位置
+    print(f"导管参数设备: {needle.T_0.device}")
+    print(f"点云数据设备: {needle.catheter_points.device}")
+    
+    # 计算运动学
+    needle.forward_kinematics()
+    needle.calculate_shape()
+    
+    # 可视化前转换到CPU
+    catheter_np = needle.catheter_points.cpu().numpy()
+    
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(needle.catheter_points[:,0],  # X坐标
-               needle.catheter_points[:,1],  # Y坐标
-               needle.catheter_points[:,2])  # Z坐标
-    
-    # 设置坐标轴标签
+    ax.scatter(catheter_np[:,0], catheter_np[:,1], catheter_np[:,2])
     ax.set_xlabel('X(mm)')
     ax.set_ylabel('Y(mm)')
     ax.set_zlabel('Z(mm)')
-    
-    # 设置显示范围
-    ax.set_xlim([-50,50])
-    ax.set_ylim([-50,50])
-    ax.set_zlim([0,100])
-
     plt.show()
