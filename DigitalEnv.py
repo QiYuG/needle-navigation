@@ -467,22 +467,9 @@ def calculate_potential_field(envs, needle_points, centerline_points, k=10, epsi
 
     return potential_1 + k / (min_obstacle + epsilon)  
 
-def check_device(obj):
-    """递归检查所有张量的设备位置"""
-    if isinstance(obj, torch.Tensor):
-        assert obj.device == envs.device, f"张量设备不一致: {obj.device} vs {env.device}"
-    elif isinstance(obj, (list, tuple)):
-        for item in obj:
-            check_device(item)
-    elif isinstance(obj, dict):
-        for v in obj.values():
-            check_device(v)
-
-
 
 if __name__ == '__main__':
     envs = DigitalEnv(device='cuda') if torch.cuda.is_available() else DigitalEnv()
-    check_device(envs.__dict__)  # 检查环境类的所有属性
     envs.reset()    
     r_x_best = envs.needle.r_x      #最优弯曲半径
     dis_max = 1     #距心脏和瓣膜的最大距离
