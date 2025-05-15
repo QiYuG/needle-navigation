@@ -363,17 +363,17 @@ class DigitalEnv(gym.Env):
         # 导管实例
         self.needle = Needle(device=device)
         self.fig = None
-        self.destination = utility.get_destination(self.centerline[0], self.normal_vector, self.needle.catheter_points)
+        self.destination = utility.get_destination(self.centerline[0], self.normal_vector, self.valve_faces)
+        print("destination: ", self.destination)
         self.start = torch.tensor([0, 0, 0], dtype=torch.float32, device=self.device)
 
-    def reset(self, dz1=30, theta_z=0, theta_x=80, theta_y=0, dz2=20, r_x=30, seed=None, options=None):
-        self.needle.dz1 = torch.tensor(dz1, dtype=torch.float32, device=self.device) 
-        self.needle.theta_z = torch.tensor(theta_z, dtype=torch.float32, device=self.device)
-        self.needle.theta_x = torch.tensor(theta_x, dtype=torch.float32, device=self.device)
-        # self.needle.r_x = torch.tensor((62.89620622886024 * 180) / (self.needle.theta_x * torch.pi),dtype=torch.float32,device=self.device)
-        self.needle.r_x = torch.tensor(r_x,dtype=torch.float32,device=self.device)
-        self.needle.theta_y = torch.tensor(theta_y, dtype=torch.float32, device=self.device)
-        self.needle.dz2 = torch.tensor(dz2, dtype=torch.float32, device=self.device)
+    def reset(self, dz1=0, theta_z=0, theta_x=0, theta_y=0, dz2=0, seed=None, options=None):
+        self.needle.dz1 = torch.tensor(dz1, dtype=torch.float32, device=self.device, requires_grad=True) 
+        self.needle.theta_z = torch.tensor(theta_z, dtype=torch.float32, device=self.device, requires_grad=True)
+        self.needle.theta_x = torch.tensor(theta_x, dtype=torch.float32, device=self.device, requires_grad=True)
+        self.needle.r_x = torch.tensor(0, dtype=torch.float32, device=self.device, requires_grad=True) if theta_x == 0 else (62.89620622886024 * 180) / (self.needle.theta_x * torch.pi)
+        self.needle.theta_y = torch.tensor(theta_y, dtype=torch.float32, device=self.device, requires_grad=True)
+        self.needle.dz2 = torch.tensor(dz2, dtype=torch.float32, device=self.device, requires_grad=True)
         self.needle.forward_kinematics()
         self.needle.calculate_shape()
 
@@ -437,7 +437,7 @@ class DigitalEnv(gym.Env):
         )
         
         # 导管可视化
-        catheter_np = self.needle.catheter_points.cpu().numpy()
+        catheter_np = self.needle.catheter_points.detach().cpu().numpy()
         self.ax.scatter(
             catheter_np[:, 0], 
             catheter_np[:, 1], 
@@ -468,67 +468,258 @@ def calculate_potential_field(envs, needle_points, centerline_points, k=10, epsi
     return potential_1 + k / (min_obstacle + epsilon)  
 
 
+def artificial_potential_field_planning(env, max_steps=200, learning_rate=0.001):
+    """
+    使用人工势场法对导管进行路径规划
+    :param env: DigitalEnv 环境实例
+    :param max_steps: 最大优化步数
+    :param learning_rate: 学习率
+    """
+    # 势场权重
+    k_attract = 0.1
+    k_repel = 0.01
+    k_direction = 0.1
+    epsilon = 1e-6
+
+    # 获取目标点和方向
+    destination = env.destination
+    normal_vector = env.normal_vector
+
+    for step in range(max_steps):
+        # 获取导管末端位置和方向
+        env.needle.forward_kinematics()
+        env.needle.calculate_shape()
+        end_point = env.needle.catheter_points[-1]
+        end_direction = env.needle.T_12[0:3, 2]  # 导管末端方向向量
+        # 排斥势场
+        obstacle_points = torch.cat([env.sampled_vertices, env.valve_unique_vertices])
+        distances = utility.calculate_loss(obstacle_points, env.needle.catheter_points)
+        # 总势场
+        total_potential = calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
+
+        # 打印当前势场值
+        print(f"Step {step}, Total Potential: {total_potential.item()}")
+
+        # 计算梯度（数值梯度）
+        gradients = calculate_gradient(env, total_potential, destination, normal_vector, k_attract, k_repel, k_direction, epsilon)
+        
+        
+        env.needle.dz1 -= learning_rate * gradients["dz1"]
+        env.needle.dz2 -= learning_rate * gradients["dz2"]
+        env.needle.theta_x -= learning_rate * gradients["theta_x"]
+        env.needle.theta_y -= learning_rate * gradients["theta_y"]
+        env.needle.theta_z -= learning_rate * gradients["theta_z"]
+
+        # 更新 r_x
+        env.needle.r_x = torch.tensor((62.89620622886024 * 180) / (env.needle.theta_x * torch.pi+epsilon),
+                                      dtype=torch.float32, device=env.device)
+            
+        # 可视化
+        env.render()
+
+        # 判断是否到达目标点
+        if torch.norm(end_point - destination) < 1.0 and torch.norm(end_direction - normal_vector) < 0.1:
+            print("Reached destination!")
+            break
+
+
+# def artificial_potential_field_planning(env, max_steps=100, learning_rate=0.1):
+#     """
+#     使用人工势场法对导管进行路径规划（PyTorch 优化器版本）
+#     :param env: DigitalEnv 环境实例
+#     :param max_steps: 最大优化步数
+#     :param learning_rate: 学习率
+#     """
+#     k_attract = 1.0
+#     k_repel = 100.0
+#     k_direction = 1.0
+#     epsilon = 1e-6
+#     destination = env.destination
+#     normal_vector = env.normal_vector
+
+#     # 确保参数启用梯度跟踪（初始化时已设置）
+#     optimizable_params = [
+#         env.needle.dz1,
+#         env.needle.dz2,
+#         env.needle.theta_x,
+#         env.needle.theta_y,
+#         env.needle.theta_z
+#     ]
+#     optimizer = torch.optim.Adam(optimizable_params, lr=learning_rate)
+
+#     for step in range(max_steps):
+#         optimizer.zero_grad()  # 梯度清零
+
+#         # 前向传播与势场计算
+#         env.needle.forward_kinematics()
+#         env.needle.calculate_shape()
+#         end_point = env.needle.catheter_points[-1]
+#         end_direction = env.needle.T_12[0:3, 2]
+
+#         # 势场计算（与原始代码一致）
+#         attract_potential = 0.5 * k_attract * torch.norm(end_point - destination) ** 2
+#         obstacle_points = torch.cat([env.sampled_vertices, env.valve_unique_vertices])
+#         distances = utility.calculate_loss(obstacle_points, env.needle.catheter_points)
+#         repel_potential = k_repel / (distances ** 2 + epsilon)
+#         direction_potential = k_direction * torch.norm(end_direction - normal_vector) ** 2
+#         total_potential = attract_potential + repel_potential + direction_potential
+
+#         print(f"Step {step}, Total Potential: {total_potential.item()}")
+
+#         # 反向传播与参数更新
+#         total_potential.backward()
+#         optimizer.step()
+
+#         # 更新 r_x（保持计算图）
+#         with torch.no_grad():
+#             env.needle.r_x = (62.89620622886024 * 180) / (env.needle.theta_x * torch.pi+epsilon)
+
+#         env.render()
+
+#         # 终止条件
+#         if torch.norm(end_point - destination) < 1.0 and torch.norm(end_direction - normal_vector) < 0.1:
+#             print("Reached destination!")
+#             break
+
+
+def calculate_gradient(env, original_poteintial, destination, normal_vector, k_attract, k_repel, k_direction, epsilon):
+    """
+    计算势场函数相对于导管控制参数的梯度
+    :param env: DigitalEnv 环境实例
+    :param destination: 目标点
+    :param normal_vector: 目标方向向量
+    :param k_attract: 吸引势场权重
+    :param k_repel: 排斥势场权重
+    :param k_direction: 方向势场权重
+    :param epsilon: 防止分母为零的小值
+    :return: 梯度字典
+    """
+    gradients = {}
+    delta = 1e-4  # 用于有限差分的微小增量
+
+    # 保存当前参数
+    original_params = {
+        "dz1": env.needle.dz1.clone(),
+        "dz2": env.needle.dz2.clone(),
+        "theta_x": env.needle.theta_x.clone(),
+        "theta_y": env.needle.theta_y.clone(),
+        "theta_z": env.needle.theta_z.clone(),
+    }
+
+    # 对每个参数计算梯度
+    for param in original_params.keys():
+        # 增加 delta
+        setattr(env.needle, param, original_params[param] + delta)
+        env.needle.forward_kinematics()
+        env.needle.calculate_shape()
+
+        # 计算新的势场值
+        end_point = env.needle.catheter_points[-1]
+        end_direction = env.needle.T_12[0:3, 2]
+        obstacle_points = torch.cat([env.sampled_vertices, env.valve_unique_vertices])
+        distances = utility.calculate_loss(obstacle_points, env.needle.catheter_points)
+        
+        new_potential = calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
+
+        # 恢复原始参数
+        setattr(env.needle, param, original_params[param])
+
+        # 计算梯度
+        gradients[param] = (new_potential - original_poteintial) / delta
+
+    return gradients
+
+
+def calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6):
+    """
+    计算势场值
+    :param end_point: 导管末端位置
+    :param end_direction: 导管末端方向向量
+    :param distances: 导管末端到障碍物的距离
+    :param destination: 目标点
+    :param normal_vector: 目标方向向量
+    :param k_attract: 吸引势场权重
+    :param k_repel: 排斥势场权重
+    :param k_direction: 方向势场权重
+    :param epsilon: 防止分母为零的小值
+    :return: 势场值
+    """
+    attract_potential = 0.5 * k_attract * torch.norm(end_point - destination) ** 2
+
+    repel_potential = k_repel / (distances ** 2 + epsilon)
+    
+    direction_potential = k_direction * torch.norm(end_direction - normal_vector) ** 2
+    
+    return attract_potential + repel_potential + direction_potential
+
+
+
 if __name__ == '__main__':
     envs = DigitalEnv(device='cuda') if torch.cuda.is_available() else DigitalEnv()
     envs.reset()    
-    r_x_best = envs.needle.r_x      #最优弯曲半径
-    dis_max = 1     #距心脏和瓣膜的最大距离
-    catheter_points = torch.tensor([[]], device=envs.device)        #导管点云
-    while True:
-        envs.needle.r_x += 1
-        # envs.needle.r22_x = 68
-        envs.step()
+#     r_x_best = envs.needle.r_x      #最优弯曲半径
+#     dis_max = 1     #距心脏和瓣膜的最大距离
+#     catheter_points = torch.tensor([[]], device=envs.device)        #导管点云
+#     while True:
+#         envs.needle.r_x += 1
+#         # envs.needle.r22_x = 68
+#         envs.step()
         
-        # 合并了心脏和瓣膜的点云
-        obstacle = torch.cat([envs.sampled_vertices, envs.valve_unique_vertices])
-        # 弯曲部分与整个点云的最小距离及索引
-        dis1, obs_id1 = utility.calculate_min_dis(obstacle, envs.needle.catheter_bending_section[::100,:])
-        # 刚性部分与心脏点云的最小距离及索引
-        dis2, obs_id2 = utility.calculate_min_dis(envs.sampled_vertices, envs.needle.catheter_rigid_section[::50,:])
-        # 加权距离，有点好玩
-        dis = dis1 + 0.5*dis2
-        if dis > dis_max:
-            dis_max = dis
-            r_x_best = envs.needle.r_x
-            # 记录此时的导管位置
-            catheter_points = envs.needle.catheter_points
-        print('r_x: ', envs.needle.r_x, 'dis: ', dis, 'dis1: ', dis1, 'dis2: ', dis2)
-        # title = 'r_x: {}, dis: {}, dis1: {}, dis2: {}'.format(envs.needle.r_x, dis, dis1, dis2)
-        envs.render()
+#         # 合并了心脏和瓣膜的点云
+#         obstacle = torch.cat([envs.sampled_vertices, envs.valve_unique_vertices])
+#         # 弯曲部分与整个点云的最小距离及索引
+#         dis1, obs_id1 = utility.calculate_min_dis(obstacle, envs.needle.catheter_bending_section[::100,:])
+#         # 刚性部分与心脏点云的最小距离及索引
+#         dis2, obs_id2 = utility.calculate_min_dis(envs.sampled_vertices, envs.needle.catheter_rigid_section[::50,:])
+#         # 加权距离，有点好玩
+#         dis = dis1 + 0.5*dis2
+#         if dis > dis_max:
+#             dis_max = dis
+#             r_x_best = envs.needle.r_x
+#             # 记录此时的导管位置
+#             catheter_points = envs.needle.catheter_points
+#         print('r_x: ', envs.needle.r_x, 'dis: ', dis, 'dis1: ', dis1, 'dis2: ', dis2)
+#         # title = 'r_x: {}, dis: {}, dis1: {}, dis2: {}'.format(envs.needle.r_x, dis, dis1, dis2)
+#         envs.render()
 
-        #plot min distance obs point
-        envs.ax.scatter(obstacle[obs_id1[0],0], 
-                        obstacle[obs_id1[0],1], 
-                        obstacle[obs_id1[0],2], s=50, c='black')
+#         #plot min distance obs point
+#         envs.ax.scatter(obstacle[obs_id1[0],0], 
+#                         obstacle[obs_id1[0],1], 
+#                         obstacle[obs_id1[0],2], s=50, c='black')
         
-        envs.ax.scatter(envs.sampled_vertices[obs_id2[0],0], 
-                envs.sampled_vertices[obs_id2[0],1], 
-                envs.sampled_vertices[obs_id2[0],2], s=50, c='black')
+#         envs.ax.scatter(envs.sampled_vertices[obs_id2[0],0], 
+#                 envs.sampled_vertices[obs_id2[0],1], 
+#                 envs.sampled_vertices[obs_id2[0],2], s=50, c='black')
 
-        envs.ax.set_xlim([-150, 150])
-        envs.ax.set_ylim([-150, 150])
-        envs.ax.set_zlim([0, 300])
+#         envs.ax.set_xlim([-150, 150])
+#         envs.ax.set_ylim([-150, 150])
+#         envs.ax.set_zlim([0, 300])
         
-        plt.pause(0.01)
-        if envs.needle.r_x == 100:
-            # envs.needle.r_x =10
-            break
+#         plt.pause(0.01)
+#         if envs.needle.r_x == 100:
+#             # envs.needle.r_x =10
+#             break
 
-    # plot result
-    envs.needle.r_x = r_x_best
-    print('config: ', r_x_best)
-    np.savetxt("catheter_shape_plan_1.txt", catheter_points, fmt="%.6f", delimiter=" ")
-    envs.step()
-    envs.render()
+#     # plot result
+#     envs.needle.r_x = r_x_best
+#     print('config: ', r_x_best)
+#     np.savetxt("catheter_shape_plan_1.txt", catheter_points, fmt="%.6f", delimiter=" ")
+#     envs.step()
+#     envs.render()
 
-    envs.ax.set_xlim([-150,150])
-    envs.ax.set_ylim([-150,150])
-    envs.ax.set_zlim([0,300])
-    plt.pause(10000)
+#     envs.ax.set_xlim([-150,150])
+#     envs.ax.set_ylim([-150,150])
+#     envs.ax.set_zlim([0,300])
+#     plt.pause(10000)
 
 
-"""
-其实导管模型考虑了两部分：
-弯曲部分——用于导向瓣膜
-刚性部分——用于进入血管        
-"""  
+# """
+# 其实导管模型考虑了两部分：
+# 弯曲部分——用于导向瓣膜
+# 刚性部分——用于进入血管        
+# """  
+
+    artificial_potential_field_planning(envs, max_steps=900, learning_rate=0.1)
+    # 保存最终导管形状
+    np.savetxt("planned_catheter_shape.txt", envs.needle.catheter_points.cpu().numpy(), fmt="%.6f", delimiter=" ")
+    plt.show()

@@ -303,8 +303,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 class Needle():
-    def __init__(self, x_base=0, y_base=0, dz1=30, theta_z=-20, r_x=70, 
-                 theta_x=80, theta_y=0, dz2=20, 
+    def __init__(self, x_base=0, y_base=0, dz1=0, theta_z=0,
+                 theta_x=80, theta_y=0, dz2=0, 
                  device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):  # 新增device参数
         """ 初始化导管参数（支持GPU设备） """
         self.device = device  # 存储设备信息
@@ -314,12 +314,12 @@ class Needle():
         self.y_base = torch.tensor(y_base, dtype=torch.float32, device=device)
 
         # 运动学参数（保持为张量）
-        self.dz1 = torch.tensor(dz1, dtype=torch.float32, device=device)
-        self.theta_z = torch.tensor(theta_z, dtype=torch.float32, device=device)
-        self.r_x = torch.tensor(r_x, dtype=torch.float32, device=device)
-        self.theta_x = torch.tensor(theta_x, dtype=torch.float32, device=device)
-        self.theta_y = torch.tensor(theta_y, dtype=torch.float32, device=device)
-        self.dz2 = torch.tensor(dz2, dtype=torch.float32, device=device)
+        self.dz1 = torch.tensor(dz1, dtype=torch.float32, device=device, requires_grad=True)
+        self.theta_z = torch.tensor(theta_z, dtype=torch.float32, device=device, requires_grad=True)
+        self.theta_x = torch.tensor(theta_x, dtype=torch.float32, device=device, requires_grad=True)
+        self.r_x =  torch.tensor(0, dtype=torch.float32, device=device, requires_grad=True) if theta_x == 0 else (62.89620622886024 * 180) / (self.theta_x * torch.pi)
+        self.theta_y = torch.tensor(theta_y, dtype=torch.float32, device=device, requires_grad=True)
+        self.dz2 = torch.tensor(dz2, dtype=torch.float32, device=device, requires_grad=True)
 
         # 初始化变换矩阵（直接在目标设备上创建）
         self.T_0 = self.transl(self.x_base, self.y_base, 0)  # 基准坐标系
@@ -350,7 +350,7 @@ class Needle():
             self.theta_x, self.r_x
         ) @ self.transformation_matrix_y(self.theta_y, 0)
 
-    def calculate_shape(self):
+    def calculate_shape(self, strait_number_1=100, strait_number_2=100, bending_number=500):
         """ 形状计算（全GPU张量操作） """
         # 初始化点云容器（保持设备一致）
         self.catheter_points = torch.tensor(
@@ -360,7 +360,7 @@ class Needle():
         
         # 第一部分：直线段（设备感知的linspace）
         z_values = torch.linspace(
-            1, self.dz1, int(self.dz1), 
+            0, self.dz1, strait_number_1, 
             device=self.device
         )
         section_one_points = torch.stack((
@@ -372,13 +372,13 @@ class Needle():
         # 第二部分：弯曲段（设备感知的三角函数）
         length = self.r_x * self.theta_x * torch.pi / 180
         length_values = torch.linspace(
-            1, length, int(length), 
+            0, length, bending_number, 
             device=self.device
         )
-        x_values = torch.zeros(int(length), device=self.device)
+        x_values = torch.zeros(bending_number, device=self.device)
         y_values = -self.r_x + self.r_x * torch.cos(length_values/self.r_x)
         z_values = self.r_x * torch.sin(length_values/self.r_x)
-        one_values = torch.ones(int(length), device=self.device)
+        one_values = torch.ones(bending_number, device=self.device)
         
         section_two_points = torch.stack(
             (x_values, y_values, z_values, one_values), 
@@ -388,12 +388,12 @@ class Needle():
         
         # 第三部分：刚性段（设备感知的操作）
         z_values = torch.linspace(
-            1, self.dz2, int(self.dz2), 
+            0, self.dz2, strait_number_2, 
             device=self.device
         )
-        x_values = torch.zeros(int(self.dz2), device=self.device)
-        y_values = torch.zeros(int(self.dz2), device=self.device)
-        one_values = torch.ones(int(self.dz2), device=self.device)
+        x_values = torch.zeros(strait_number_2, device=self.device)
+        y_values = torch.zeros(strait_number_2, device=self.device)
+        one_values = torch.ones(strait_number_2, device=self.device)
         section_three_points = torch.stack(
             (x_values, y_values, z_values, one_values), 
             dim=0
