@@ -312,15 +312,19 @@ class DigitalEnv(gym.Env):
                  device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
         super(DigitalEnv, self).__init__()
         self.device = device
-
         # 心脏模型处理
         stl_mesh = mesh.Mesh.from_file(filename_heart)
         all_vertices = torch.from_numpy(np.vstack((stl_mesh.v0, stl_mesh.v1, stl_mesh.v2))).to(device)
-        self.sampled_vertices = torch.as_tensor(
-            np.unique(all_vertices, axis=0),
-            dtype=torch.float32,
-            device=self.device
-        )
+        # self.sampled_vertices = torch.as_tensor(
+        #     np.unique(all_vertices, axis=0),
+        #     dtype=torch.float32,
+        #     device=self.device
+        # )
+        self.sampled_vertices = torch.unique(
+            all_vertices,
+            dim=0,          # 按行去重（等价于np.unique的axis=0）
+            sorted=True     # 保持与NumPy一致的默认排序行为
+        ).to(dtype=torch.float32, device=self.device)
         
         # 面片采样
         self.sampled_faces = torch.as_tensor(
@@ -752,7 +756,7 @@ if __name__ == '__main__':
 # 刚性部分——用于进入血管        
 # """  
 
-    artificial_potential_field_planning(envs, max_steps=900, learning_rate_length=0.1, learning_rate_angle=0.6)
+    artificial_potential_field_planning(envs, max_steps=900, learning_rate_length=0.1, learning_rate_angle=0.5)
     # 保存最终导管形状
     np.savetxt("planned_catheter_shape.txt", envs.needle.catheter_points.cpu().numpy(), fmt="%.6f", delimiter=" ")
     plt.show()
