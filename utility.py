@@ -265,14 +265,17 @@ def calculate_min_dis(heart_vertices, catheter_line):
         min_distance: 最小欧氏距离
         ids: 最小距离对应的顶点和导管点索引元组 (vertex_idx, catheter_point_idx)
     """
+    heart_vertices = heart_vertices[torch.isfinite(heart_vertices).all(dim=1)]
+    catheter_line = catheter_line[torch.isfinite(catheter_line).all(dim=1)]
     # 计算距离矩阵 [6,7](@ref)
     distances = torch.cdist(heart_vertices.unsqueeze(0), catheter_line.unsqueeze(0)).squeeze(0)
-    
+    if torch.isnan(distances).any() or torch.isinf(distances).any():
+        print("distances contains NaN or Inf values.")
     # 获取最小距离和索引 [9](@ref)
     min_distance, flat_idx = torch.min(distances.view(-1), dim=0)
     idx = (flat_idx // distances.size(1), flat_idx % distances.size(1))
     
-    return min_distance.item(), idx
+    return min_distance, idx
 
 # ====================== 平面拟合与法线计算函数 ======================
 def fit_plane_and_find_normal_line(points, threshold=150, modify=torch.tensor([0,10,-3])):

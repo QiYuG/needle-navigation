@@ -468,7 +468,7 @@ def calculate_potential_field(envs, needle_points, centerline_points, k=10, epsi
     return potential_1 + k / (min_obstacle + epsilon)  
 
 
-def artificial_potential_field_planning(env, max_steps=200, learning_rate=0.001):
+def artificial_potential_field_planning(env, max_steps=200, learning_rate_length=0.1, learning_rate_angle=0.1):
     """
     使用人工势场法对导管进行路径规划
     :param env: DigitalEnv 环境实例
@@ -480,6 +480,9 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate=0.001)
     k_repel = 0.01
     k_direction = 0.1
     epsilon = 1e-6
+    # last_attract_potential = 0.0
+    # last_repel_potential = 0.0
+    # last_direction_potential = 0.0
 
     # 获取目标点和方向
     destination = env.destination
@@ -493,9 +496,14 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate=0.001)
         end_direction = env.needle.T_12[0:3, 2]  # 导管末端方向向量
         # 排斥势场
         obstacle_points = torch.cat([env.sampled_vertices, env.valve_unique_vertices])
-        distances = utility.calculate_loss(obstacle_points, env.needle.catheter_points)
+        distance1 = utility.calculate_loss(obstacle_points, env.needle.catheter_points)
+        distance2,_ = utility.calculate_min_dis(obstacle_points, env.needle.catheter_points)
+        distances = 1 * distance1 + 0.001 * distance2
+        
+        temp_attract_poteintial, temp_repel_poteintial, temp_direction_poteintial = calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
+        
         # 总势场
-        total_potential = calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
+        total_potential = temp_attract_poteintial + temp_repel_poteintial + temp_direction_poteintial
 
         # 打印当前势场值
         print(f"Step {step}, Total Potential: {total_potential.item()}")
@@ -504,11 +512,11 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate=0.001)
         gradients = calculate_gradient(env, total_potential, destination, normal_vector, k_attract, k_repel, k_direction, epsilon)
         
         
-        env.needle.dz1 -= learning_rate * gradients["dz1"]
-        env.needle.dz2 -= learning_rate * gradients["dz2"]
-        env.needle.theta_x -= learning_rate * gradients["theta_x"]
-        env.needle.theta_y -= learning_rate * gradients["theta_y"]
-        env.needle.theta_z -= learning_rate * gradients["theta_z"]
+        env.needle.dz1 -= learning_rate_length * gradients["dz1"]
+        env.needle.dz2 -= learning_rate_length * gradients["dz2"]
+        env.needle.theta_x -= learning_rate_angle * gradients["theta_x"]
+        env.needle.theta_y -= learning_rate_angle * gradients["theta_y"]
+        env.needle.theta_z -= learning_rate_angle * gradients["theta_z"]
 
         # 更新 r_x
         env.needle.r_x = torch.tensor((62.89620622886024 * 180) / (env.needle.theta_x * torch.pi+epsilon),
@@ -516,6 +524,28 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate=0.001)
             
         # 可视化
         env.render()
+        
+        # if last_attract_potential == 0.0 and last_repel_potential == 0.0 and last_direction_potential == 0.0:
+        #     last_attract_potential = temp_attract_poteintial
+        #     last_repel_potential = temp_repel_poteintial
+        #     last_direction_potential = temp_direction_poteintial
+        #     continue
+        
+        # if temp_attract_poteintial < last_attract_potential:
+        #     k_attract *= 1.0001
+        # else:
+        #     k_attract /= 1.0001
+        
+        # if temp_repel_poteintial < last_repel_potential:
+        #     k_repel *= 1.0001
+        # else:
+        #     k_repel /= 1.0001
+            
+        # if temp_direction_poteintial < last_direction_potential:
+        #     k_direction *= 1.0001
+        # else:
+        #     k_direction /= 1.0001
+            
 
         # 判断是否到达目标点
         if torch.norm(end_point - destination) < 1.0 and torch.norm(end_direction - normal_vector) < 0.1:
@@ -617,9 +647,12 @@ def calculate_gradient(env, original_poteintial, destination, normal_vector, k_a
         end_point = env.needle.catheter_points[-1]
         end_direction = env.needle.T_12[0:3, 2]
         obstacle_points = torch.cat([env.sampled_vertices, env.valve_unique_vertices])
-        distances = utility.calculate_loss(obstacle_points, env.needle.catheter_points)
+        distance1 = utility.calculate_loss(obstacle_points, env.needle.catheter_points)
+        distance2,_ = utility.calculate_min_dis(obstacle_points, env.needle.catheter_points)
+        distances = 1 * distance1 + 0.001 * distance2
         
-        new_potential = calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
+        new_attract_poteintial, new_repel_poteintial, new_direction_poteintial = calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract, k_repel, k_direction, epsilon)
+        new_potential = new_attract_poteintial + new_repel_poteintial + new_direction_poteintial
 
         # 恢复原始参数
         setattr(env.needle, param, original_params[param])
@@ -630,7 +663,7 @@ def calculate_gradient(env, original_poteintial, destination, normal_vector, k_a
     return gradients
 
 
-def calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6):
+def calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract, k_repel, k_direction, epsilon):
     """
     计算势场值
     :param end_point: 导管末端位置
@@ -650,7 +683,7 @@ def calculate_poteintial(end_point, end_direction, distances, destination, norma
     
     direction_potential = k_direction * torch.norm(end_direction - normal_vector) ** 2
     
-    return attract_potential + repel_potential + direction_potential
+    return attract_potential, repel_potential, direction_potential
 
 
 
@@ -719,7 +752,7 @@ if __name__ == '__main__':
 # 刚性部分——用于进入血管        
 # """  
 
-    artificial_potential_field_planning(envs, max_steps=900, learning_rate=0.1)
+    artificial_potential_field_planning(envs, max_steps=900, learning_rate_length=0.1, learning_rate_angle=0.6)
     # 保存最终导管形状
     np.savetxt("planned_catheter_shape.txt", envs.needle.catheter_points.cpu().numpy(), fmt="%.6f", delimiter=" ")
     plt.show()
