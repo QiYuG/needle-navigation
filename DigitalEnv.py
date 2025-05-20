@@ -516,16 +516,17 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate_length
         gradients = calculate_gradient(env, total_potential, destination, normal_vector, k_attract, k_repel, k_direction, epsilon)
         
         
-        env.needle.dz1 -= learning_rate_length * gradients["dz1"]
-        env.needle.dz2 -= learning_rate_length * gradients["dz2"]
-        env.needle.theta_x -= learning_rate_angle * gradients["theta_x"]
-        env.needle.theta_y -= learning_rate_angle * gradients["theta_y"]
-        env.needle.theta_z -= learning_rate_angle * gradients["theta_z"]
+        env.needle.dz1 -= torch.clamp(learning_rate_length * gradients["dz1"],-10,10) 
+        env.needle.dz2 -= torch.clamp(learning_rate_length * gradients["dz2"],-10,10)
+        env.needle.theta_x -= torch.clamp(learning_rate_angle * gradients["theta_x"],-2,2)
+        env.needle.theta_y -= torch.clamp(learning_rate_angle * gradients["theta_y"],-2,2)
+        env.needle.theta_z -= torch.clamp(learning_rate_angle * gradients["theta_z"],-2,2)
 
         # 更新 r_x
         env.needle.r_x = torch.tensor((62.89620622886024 * 180) / (env.needle.theta_x * torch.pi+epsilon),
                                       dtype=torch.float32, device=env.device)
-            
+
+        print("theta_x:", env.needle.theta_x.item(),"theta_y:", env.needle.theta_y.item(),"theta_z:", env.needle.theta_z.item(), "r_x:", env.needle.r_x.item(), "dz1:", env.needle.dz1.item(), "dz2:", env.needle.dz2.item())    
         # 可视化
         env.render()
         
@@ -643,7 +644,7 @@ def calculate_gradient(env, original_poteintial, destination, normal_vector, k_a
     # 对每个参数计算梯度
     for param in original_params.keys():
         # 增加 delta
-        setattr(env.needle, param, original_params[param] + delta)
+        setattr(env.needle, param, original_params[param] - delta)
         env.needle.forward_kinematics()
         env.needle.calculate_shape()
 
@@ -662,7 +663,7 @@ def calculate_gradient(env, original_poteintial, destination, normal_vector, k_a
         setattr(env.needle, param, original_params[param])
 
         # 计算梯度
-        gradients[param] = (new_potential - original_poteintial) / delta
+        gradients[param] = (original_poteintial - new_potential) / delta
 
     return gradients
 
@@ -756,7 +757,7 @@ if __name__ == '__main__':
 # 刚性部分——用于进入血管        
 # """  
 
-    artificial_potential_field_planning(envs, max_steps=900, learning_rate_length=0.1, learning_rate_angle=0.5)
+    artificial_potential_field_planning(envs, max_steps=900, learning_rate_length=0.3, learning_rate_angle=0.2)
     # 保存最终导管形状
     np.savetxt("planned_catheter_shape.txt", envs.needle.catheter_points.cpu().numpy(), fmt="%.6f", delimiter=" ")
     plt.show()
