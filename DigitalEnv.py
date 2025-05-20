@@ -371,7 +371,7 @@ class DigitalEnv(gym.Env):
         print("destination: ", self.destination)
         self.start = torch.tensor([0, 0, 0], dtype=torch.float32, device=self.device)
 
-    def reset(self, dz1=0, theta_z=0, theta_x=0, theta_y=0, dz2=0, seed=None, options=None):
+    def reset(self, dz1=0, theta_z=0, theta_x=0, theta_y=0, dz2=20, seed=None, options=None):
         self.needle.dz1 = torch.tensor(dz1, dtype=torch.float32, device=self.device, requires_grad=True) 
         self.needle.theta_z = torch.tensor(theta_z, dtype=torch.float32, device=self.device, requires_grad=True)
         self.needle.theta_x = torch.tensor(theta_x, dtype=torch.float32, device=self.device, requires_grad=True)
@@ -517,7 +517,7 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate_length
         
         
         env.needle.dz1 -= torch.clamp(learning_rate_length * gradients["dz1"],-10,10) 
-        env.needle.dz2 -= torch.clamp(learning_rate_length * gradients["dz2"],-10,10)
+        # env.needle.dz2 -= torch.clamp(learning_rate_length * gradients["dz2"],-10,10)
         env.needle.theta_x -= torch.clamp(learning_rate_angle * gradients["theta_x"],-2,2)
         env.needle.theta_y -= torch.clamp(learning_rate_angle * gradients["theta_y"],-2,2)
         env.needle.theta_z -= torch.clamp(learning_rate_angle * gradients["theta_z"],-2,2)
@@ -635,7 +635,7 @@ def calculate_gradient(env, original_poteintial, destination, normal_vector, k_a
     # 保存当前参数
     original_params = {
         "dz1": env.needle.dz1.clone(),
-        "dz2": env.needle.dz2.clone(),
+        # "dz2": env.needle.dz2.clone(),
         "theta_x": env.needle.theta_x.clone(),
         "theta_y": env.needle.theta_y.clone(),
         "theta_z": env.needle.theta_z.clone(),
@@ -757,7 +757,7 @@ if __name__ == '__main__':
 # 刚性部分——用于进入血管        
 # """  
 
-    artificial_potential_field_planning(envs, max_steps=900, learning_rate_length=0.3, learning_rate_angle=0.2)
+    artificial_potential_field_planning(envs, max_steps=900, learning_rate_length=0.4, learning_rate_angle=0.2)
     # 保存最终导管形状
     np.savetxt("planned_catheter_shape.txt", envs.needle.catheter_points.cpu().numpy(), fmt="%.6f", delimiter=" ")
     plt.show()
