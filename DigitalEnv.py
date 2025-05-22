@@ -303,6 +303,19 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import utility
 from Needle import Needle
 
+'''
+强化学习思路：
+沿袭人工势场法
+观测：[位置距离，方向差距，相对位置，最小距离]
+[torch.norm(end_point - destination), 
+torch.norm(end_direction - normal_vector), 
+utility.calculate_loss(obstacle_points, env.needle.catheter_points), 
+utility.calculate_min_dis(obstacle_points, env.needle.catheter_points)]
+奖励：就是势场函数值
+动作：[dz1, theta_x, theta_y, theta_z]
+'''
+
+
 class DigitalEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
@@ -358,11 +371,15 @@ class DigitalEnv(gym.Env):
 
         # 空间定义
         self.observation_space = spaces.Box(
-            low=np.array([1, -150, 10, 10, 0, 1]),
-            high=np.array([50, 150, 50, 100, 30, 50]))
+            low=np.array([0,0,0,0]),
+            high=np.array([1000,10,10,100]),
+            dtype=np.float32)
         self.action_space = spaces.Box(
-            low=np.array([-3]*6),
-            high=np.array([3]*6))
+            low=np.array([-5, -180, -180, -180]),
+            high=np.array([100, 180, 180, 180]),
+            dtype=np.float32)
+
+        self.obstacle_points = torch.cat([self.sampled_vertices, self.valve_unique_vertices])
 
         # 导管实例
         self.needle = Needle(device=device)
@@ -380,38 +397,98 @@ class DigitalEnv(gym.Env):
         self.needle.dz2 = torch.tensor(dz2, dtype=torch.float32, device=self.device, requires_grad=True)
         self.needle.forward_kinematics()
         self.needle.calculate_shape()
+        
+        position_bias = torch.norm(self.needle.catheter_points[-1]-self.destination)
+        direction_bias = torch.norm(self.needle.T_12[0:3, 2]-self.normal_vector)
+        distance1 = utility.calculate_loss(self.obstacle_points, self.needle.catheter_points)
+        distance2,_ = utility.calculate_min_dis(self.obstacle_points, self.needle.catheter_points)
+        observation = torch.tensor([position_bias, direction_bias, distance1, distance2], dtype=torch.float32, device=self.device)
+        info = {}
 
-    def step(self, action=0):
-        # 保持原有计算逻辑
-        z_axis = torch.tensor([0, 0, 1], dtype=torch.float32, device=self.device)
-        angle_with_z = utility.angle_between_vectors(self.normal_vector, z_axis)
-        self.needle.theta_x = angle_with_z
+        return observation.cpu().numpy(), info
 
-        theta_z_opt, d_z_opt, t_val = utility.solve_parameters(
-            self.centroid, 
-            -self.normal_vector,
-            self.needle.theta_x,
-            self.needle.r_x
+    def step(self, action):
+        """
+        执行动作，更新导管状态，返回观测、奖励、终止标志和信息
+        :param action: [dz1, theta_x, theta_y, theta_z] (torch.Tensor or np.ndarray)
+        :return: observation, reward, terminated, truncated, info
+        """
+        # 1. 解析动作并更新导管参数
+        if isinstance(action, np.ndarray):
+            action = torch.tensor(action, dtype=torch.float32, device=self.device)
+        self.needle.dz1 = action[0]
+        self.needle.theta_x = torch.clamp(action[1], min=1e-3)  # 保证大于0
+        self.needle.theta_y = action[2]
+        self.needle.theta_z = action[3]
+        # r_x 依赖于 theta_x
+        self.needle.r_x = torch.tensor(
+            (62.89620622886024 * 180) / (self.needle.theta_x * torch.pi + 1e-6),
+            dtype=torch.float32, device=self.device
         )
-        self.needle.theta_z = theta_z_opt * 180 / torch.pi
-        self.needle.dz1 = d_z_opt
-        self.needle.theta_y = torch.tensor(0, dtype=torch.float32, device=self.device)
 
+        # 2. 更新导管形状
         self.needle.forward_kinematics()
         self.needle.calculate_shape()
 
-        angle_with_y = utility.angle_between_vectors(
-            self.normal_vector, 
-            self.needle.T_12[0:3, 2]
-        )
-        self.needle.theta_y = -angle_with_y
+        # 3. 计算观测
+        position_bias = torch.norm(self.needle.catheter_points[-1] - self.destination)
+        direction_bias = torch.norm(self.needle.T_12[0:3, 2] - self.normal_vector)
+        distance1 = utility.calculate_loss(self.obstacle_points, self.needle.catheter_points)
+        distance2, _ = utility.calculate_min_dis(self.obstacle_points, self.needle.catheter_points)
+        observation = torch.tensor([position_bias, direction_bias, distance1, distance2], dtype=torch.float32, device=self.device)
 
-        self.needle.forward_kinematics()
-        self.needle.calculate_shape()
+        distances = distances = 1 * distance1 + 0.001 * distance2
+        
+        # 4. 计算奖励（负势场或负距离等）
+        attract_potential, repel_potential, direction_potential = utility.calculate_potential(self.needle.catheter_points[-1], self.needle.T_12[0:3, 2], distances, self.destination, self.normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
+        reward = -attract_potential - repel_potential - direction_potential
+
+        # 5. 判断终止条件
+        terminated = bool((position_bias < 0.0001) and (direction_bias < 0.0001))
+        truncated = bool(distances < 0.0001)
+
+        # 6. info 字典
+        info = {
+            "position_bias": position_bias.item(),
+            "direction_bias": direction_bias.item(),
+            "distance1": distance1.item(),
+            "distance2": distance2.item()
+        }
+
+        return observation.cpu().numpy(), reward.item(), terminated, truncated, info
+
+    # def step(self, action):
+    #     """
+    #     执行动作，更新导管状态，返回观测、奖励、终止标志和信息
+    #     z_axis = torch.tensor([0, 0, 1], dtype=torch.float32, device=self.device)
+    #     angle_with_z = utility.angle_between_vectors(self.normal_vector, z_axis)
+    #     self.needle.theta_x = angle_with_z
+
+    #     theta_z_opt, d_z_opt, t_val = utility.solve_parameters(
+    #         self.centroid, 
+    #         -self.normal_vector,
+    #         self.needle.theta_x,
+    #         self.needle.r_x
+    #     )
+    #     self.needle.theta_z = theta_z_opt * 180 / torch.pi
+    #     self.needle.dz1 = d_z_opt
+    #     self.needle.theta_y = torch.tensor(0, dtype=torch.float32, device=self.device)
+
+    #     self.needle.forward_kinematics()
+    #     self.needle.calculate_shape()
+
+    #     angle_with_y = utility.angle_between_vectors(
+    #         self.normal_vector, 
+    #         self.needle.T_12[0:3, 2]
+    #     )
+    #     self.needle.theta_y = -angle_with_y
+
+    #     self.needle.forward_kinematics()
+    #     self.needle.calculate_shape()
 
 
 
-    def render(self):
+    def render(self, mode='human'):
         if self.fig is None:
             self.fig = plt.figure()
             self.ax = self.fig.add_subplot(111, projection='3d')
@@ -504,10 +581,10 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate_length
         distance2,_ = utility.calculate_min_dis(obstacle_points, env.needle.catheter_points)
         distances = 1 * distance1 + 0.001 * distance2
         
-        temp_attract_poteintial, temp_repel_poteintial, temp_direction_poteintial = calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
+        temp_attract_potential, temp_repel_potential, temp_direction_potential = calculate_potential(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
         
         # 总势场
-        total_potential = temp_attract_poteintial + temp_repel_poteintial + temp_direction_poteintial
+        total_potential = temp_attract_potential + temp_repel_potential + temp_direction_potential
 
         # 打印当前势场值
         print(f"Step {step}, Total Potential: {total_potential.item()}")
@@ -528,25 +605,25 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate_length
 
         print("theta_x:", env.needle.theta_x.item(),"theta_y:", env.needle.theta_y.item(),"theta_z:", env.needle.theta_z.item(), "r_x:", env.needle.r_x.item(), "dz1:", env.needle.dz1.item(), "dz2:", env.needle.dz2.item())    
         # 可视化
-        env.render()
+        # env.render()
         
         # if last_attract_potential == 0.0 and last_repel_potential == 0.0 and last_direction_potential == 0.0:
-        #     last_attract_potential = temp_attract_poteintial
-        #     last_repel_potential = temp_repel_poteintial
-        #     last_direction_potential = temp_direction_poteintial
+        #     last_attract_potential = temp_attract_potential
+        #     last_repel_potential = temp_repel_potential
+        #     last_direction_potential = temp_direction_potential
         #     continue
         
-        # if temp_attract_poteintial < last_attract_potential:
+        # if temp_attract_potential < last_attract_potential:
         #     k_attract *= 1.0001
         # else:
         #     k_attract /= 1.0001
         
-        # if temp_repel_poteintial < last_repel_potential:
+        # if temp_repel_potential < last_repel_potential:
         #     k_repel *= 1.0001
         # else:
         #     k_repel /= 1.0001
             
-        # if temp_direction_poteintial < last_direction_potential:
+        # if temp_direction_potential < last_direction_potential:
         #     k_direction *= 1.0001
         # else:
         #     k_direction /= 1.0001
@@ -617,7 +694,7 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate_length
 #             break
 
 
-def calculate_gradient(env, original_poteintial, destination, normal_vector, k_attract, k_repel, k_direction, epsilon):
+def calculate_gradient(env, original_potential, destination, normal_vector, k_attract, k_repel, k_direction, epsilon):
     """
     计算势场函数相对于导管控制参数的梯度
     :param env: DigitalEnv 环境实例
@@ -629,6 +706,7 @@ def calculate_gradient(env, original_poteintial, destination, normal_vector, k_a
     :param epsilon: 防止分母为零的小值
     :return: 梯度字典
     """
+    global min_distance1,max_distance1,min_distance2,max_distance2
     gradients = {}
     delta = 1e-4  # 用于有限差分的微小增量
 
@@ -654,21 +732,23 @@ def calculate_gradient(env, original_poteintial, destination, normal_vector, k_a
         obstacle_points = torch.cat([env.sampled_vertices, env.valve_unique_vertices])
         distance1 = utility.calculate_loss(obstacle_points, env.needle.catheter_points)
         distance2,_ = utility.calculate_min_dis(obstacle_points, env.needle.catheter_points)
+    
+        
         distances = 1 * distance1 + 0.001 * distance2
         
-        new_attract_poteintial, new_repel_poteintial, new_direction_poteintial = calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract, k_repel, k_direction, epsilon)
-        new_potential = new_attract_poteintial + new_repel_poteintial + new_direction_poteintial
+        new_attract_potential, new_repel_potential, new_direction_potential = calculate_potential(end_point, end_direction, distances, destination, normal_vector, k_attract, k_repel, k_direction, epsilon)
+        new_potential = new_attract_potential + new_repel_potential + new_direction_potential
 
         # 恢复原始参数
         setattr(env.needle, param, original_params[param])
 
         # 计算梯度
-        gradients[param] = (original_poteintial - new_potential) / delta
+        gradients[param] = (original_potential - new_potential) / delta
 
     return gradients
 
 
-def calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract, k_repel, k_direction, epsilon):
+def calculate_potential(end_point, end_direction, distances, destination, normal_vector, k_attract, k_repel, k_direction, epsilon):
     """
     计算势场值
     :param end_point: 导管末端位置
@@ -682,11 +762,16 @@ def calculate_poteintial(end_point, end_direction, distances, destination, norma
     :param epsilon: 防止分母为零的小值
     :return: 势场值
     """
-    attract_potential = 0.5 * k_attract * torch.norm(end_point - destination) ** 2
+   
+    position_bias = torch.norm(end_point - destination)
+
+    attract_potential = 0.5 * k_attract * position_bias ** 2
 
     repel_potential = k_repel / (distances ** 2 + epsilon)
     
-    direction_potential = k_direction * torch.norm(end_direction - normal_vector) ** 2
+    direction_bias = torch.norm(end_direction - normal_vector)
+    
+    direction_potential = k_direction * direction_bias ** 2
     
     return attract_potential, repel_potential, direction_potential
 
@@ -757,7 +842,11 @@ if __name__ == '__main__':
 # 刚性部分——用于进入血管        
 # """  
 
-    artificial_potential_field_planning(envs, max_steps=900, learning_rate_length=0.4, learning_rate_angle=0.2)
+    artificial_potential_field_planning(envs, max_steps=250, learning_rate_length=0.4, learning_rate_angle=0.2)
     # 保存最终导管形状
     np.savetxt("planned_catheter_shape.txt", envs.needle.catheter_points.cpu().numpy(), fmt="%.6f", delimiter=" ")
     plt.show()
+    print("min_distance1: ", min_distance1, "max_distance1: ", max_distance1)
+    print("min_distance2: ", min_distance2, "max_distance2: ", max_distance2)
+    print("min_position_bias: ", min_position_bias, "max_position_bias: ", max_position_bias)
+    print("min_direction_bias: ", min_direction_bias, "max_direction_bias: ", max_direction_bias)

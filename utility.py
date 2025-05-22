@@ -252,7 +252,7 @@ def calculate_loss(heart_vertices, catheter_line, threshold=25):
     valid_distances = distances[mask] + 1e-8  # 防止除零
     total_distance = torch.max(1.0 / valid_distances) if valid_distances.numel() > 0 else torch.tensor(0.0)
     
-    return total_distance.item()
+    return total_distance
 
 # ====================== 最小距离计算函数 ======================
 def calculate_min_dis(heart_vertices, catheter_line):
@@ -398,3 +398,30 @@ def get_destination(start_point, normal_vector, valve_points, step=0.1, max_step
         current_point += step * normal_vector
 
     return best_point
+
+def calculate_potential(end_point, end_direction, distances, destination, normal_vector, k_attract, k_repel, k_direction, epsilon):
+    """
+    计算势场值
+    :param end_point: 导管末端位置
+    :param end_direction: 导管末端方向向量
+    :param distances: 导管末端到障碍物的距离
+    :param destination: 目标点
+    :param normal_vector: 目标方向向量
+    :param k_attract: 吸引势场权重
+    :param k_repel: 排斥势场权重
+    :param k_direction: 方向势场权重
+    :param epsilon: 防止分母为零的小值
+    :return: 势场值
+    """
+   
+    position_bias = torch.norm(end_point - destination)
+
+    attract_potential = 0.5 * k_attract * position_bias ** 2
+
+    repel_potential = k_repel / (distances ** 2 + epsilon)
+    
+    direction_bias = torch.norm(end_direction - normal_vector)
+    
+    direction_potential = k_direction * direction_bias ** 2
+    
+    return attract_potential, repel_potential, direction_potential
