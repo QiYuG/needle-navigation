@@ -491,6 +491,9 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate_length
     # 获取目标点和方向
     destination = env.destination
     normal_vector = env.normal_vector
+    direction_bias_list = []
+    position_bias_list = []
+    distance_list = []
 
     for step in range(max_steps):
         # 获取导管末端位置和方向
@@ -503,8 +506,29 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate_length
         distance1 = utility.calculate_loss(obstacle_points, env.needle.catheter_points)
         distance2,_ = utility.calculate_min_dis(obstacle_points, env.needle.catheter_points)
         distances = 1 * distance1 + 0.001 * distance2
+        distance_list.append(distances.item())
         
-        temp_attract_poteintial, temp_repel_poteintial, temp_direction_poteintial = calculate_poteintial(end_point, end_direction, distances, destination, normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
+        position_bias = torch.norm(end_point - destination)
+        position_bias_list.append(position_bias.item())
+        direction_bias = torch.norm(end_direction - normal_vector)
+        direction_bias_list.append(direction_bias.item())
+        
+        k_attract = 1.0
+        k_repel = 0.01 + 1.0 / (position_bias + 1e-3)
+        # 方向奖励权重随距离减小而增大
+        k_direction = 10 + 100.0 / (position_bias + 1e-3)  # 你可以调整0.1和1.0的比例
+        
+
+        
+        temp_attract_poteintial, temp_repel_poteintial, temp_direction_poteintial = calculate_poteintial(end_point, 
+                                                                                                         end_direction, 
+                                                                                                         distances, 
+                                                                                                         destination, 
+                                                                                                         normal_vector, 
+                                                                                                         k_attract= k_attract, 
+                                                                                                         k_repel= k_repel, 
+                                                                                                         k_direction=k_direction, 
+                                                                                                         epsilon=1e-6)
         
         # 总势场
         total_potential = temp_attract_poteintial + temp_repel_poteintial + temp_direction_poteintial
@@ -526,7 +550,6 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate_length
         env.needle.r_x = torch.tensor((62.89620622886024 * 180) / (env.needle.theta_x * torch.pi+epsilon),
                                       dtype=torch.float32, device=env.device)
 
-        print("theta_x:", env.needle.theta_x.item(),"theta_y:", env.needle.theta_y.item(),"theta_z:", env.needle.theta_z.item(), "r_x:", env.needle.r_x.item(), "dz1:", env.needle.dz1.item(), "dz2:", env.needle.dz2.item())    
         # 可视化
         env.render()
         
@@ -556,6 +579,29 @@ def artificial_potential_field_planning(env, max_steps=200, learning_rate_length
         if torch.norm(end_point - destination) < 1.0 and torch.norm(end_direction - normal_vector) < 0.1:
             print("Reached destination!")
             break
+    plt.figure()
+    plt.plot(direction_bias_list, label='Direction Bias')
+    plt.xlabel('Step')
+    plt.ylabel('Direction Bias')
+    plt.title('Direction Bias vs Step')
+    plt.legend()
+    plt.show()
+    
+    plt.figure()
+    plt.plot(position_bias_list, label='position Bias')
+    plt.xlabel('Step')
+    plt.ylabel('position Bias')
+    plt.title('Position Bias vs Step')
+    plt.legend()
+    plt.show()
+    
+    plt.figure()
+    plt.plot(distance_list, label='distance')
+    plt.xlabel('Step')
+    plt.ylabel('distance')
+    plt.title('Distance vs Step')
+    plt.legend()
+    plt.show()
 
 
 # def artificial_potential_field_planning(env, max_steps=100, learning_rate=0.1):
