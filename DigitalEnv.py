@@ -440,7 +440,11 @@ class DigitalEnv(gym.Env):
         distances = distances = 1 * distance1 + 0.001 * distance2
         
         # 4. 计算奖励（负势场或负距离等）
-        attract_potential, repel_potential, direction_potential = utility.calculate_potential(self.needle.catheter_points[-1], self.needle.T_12[0:3, 2], distances, self.destination, self.normal_vector, k_attract= 0.1, k_repel= 0.01, k_direction=0.1, epsilon=1e-6)
+        k_attract = 1.0
+        k_repel = 0.01 + 1.0 / (position_bias + 1e-3)
+        # 方向奖励权重随距离减小而增大
+        k_direction = 10 + 100.0 / (position_bias + 1e-3)  # 你可以调整0.1和1.0的比例
+        attract_potential, repel_potential, direction_potential = utility.calculate_potential(self.needle.catheter_points[-1], self.needle.T_12[0:3, 2], distances, self.destination, self.normal_vector, k_attract=k_attract, k_repel=k_repel, k_direction=k_direction, epsilon=1e-6)
         reward = -attract_potential - repel_potential - direction_potential
 
         # 5. 判断终止条件
@@ -842,11 +846,11 @@ if __name__ == '__main__':
 # 刚性部分——用于进入血管        
 # """  
 
-    artificial_potential_field_planning(envs, max_steps=250, learning_rate_length=0.4, learning_rate_angle=0.2)
-    # 保存最终导管形状
-    np.savetxt("planned_catheter_shape.txt", envs.needle.catheter_points.cpu().numpy(), fmt="%.6f", delimiter=" ")
-    plt.show()
-    print("min_distance1: ", min_distance1, "max_distance1: ", max_distance1)
-    print("min_distance2: ", min_distance2, "max_distance2: ", max_distance2)
-    print("min_position_bias: ", min_position_bias, "max_position_bias: ", max_position_bias)
-    print("min_direction_bias: ", min_direction_bias, "max_direction_bias: ", max_direction_bias)
+    # artificial_potential_field_planning(envs, max_steps=250, learning_rate_length=0.4, learning_rate_angle=0.2)
+    # # 保存最终导管形状
+    # np.savetxt("planned_catheter_shape.txt", envs.needle.catheter_points.cpu().numpy(), fmt="%.6f", delimiter=" ")
+    # plt.show()
+    # print("min_distance1: ", min_distance1, "max_distance1: ", max_distance1)
+    # print("min_distance2: ", min_distance2, "max_distance2: ", max_distance2)
+    # print("min_position_bias: ", min_position_bias, "max_position_bias: ", max_position_bias)
+    # print("min_direction_bias: ", min_direction_bias, "max_direction_bias: ", max_direction_bias)
